@@ -3,7 +3,11 @@ name: Build and Release APK
 on:
   push:
     branches: [ main, master ]
+    tags: [ 'v*' ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -25,14 +29,15 @@ jobs:
       - name: Build Debug APK
         run: gradle assembleDebug --stacktrace
 
-      - name: Upload APK Artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MyAutoClicker-APK
+          name: MyAutoClicker-v1.0.apk
           path: app/build/outputs/apk/debug/app-debug.apk
 
-      - name: Create Release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        if: startsWith(github.ref, 'refs/tags/')
         with:
           files: app/build/outputs/apk/debug/app-debug.apk
+          generate_release_notes: true
