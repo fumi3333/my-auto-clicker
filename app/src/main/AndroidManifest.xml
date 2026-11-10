@@ -34,7 +34,7 @@
         </service>
 
         <service
-            android:name=".service.TouchRecordOverlayService"
+            android:name=".service.ReplayOverlayService"
             android:exported="false" />
 
     </application>

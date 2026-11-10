@@ -8,7 +8,7 @@ import android.widget.Button
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import dev.fumiproject.smarttap.service.ClickerAccessibilityService
-import dev.fumiproject.smarttap.service.TouchRecordOverlayService
+import dev.fumiproject.smarttap.service.ReplayOverlayService
 
 class MainActivity : AppCompatActivity() {
 
@@ -20,7 +20,7 @@ class MainActivity : AppCompatActivity() {
             if (!Settings.canDrawOverlays(this)) {
                 startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
             } else {
-                Toast.makeText(this, "重ねて表示権限は許可されています", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "重ねて表示は許可されています", Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -34,10 +34,10 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
             if (ClickerAccessibilityService.instance == null) {
-                Toast.makeText(this, "先に「ユーザー補助」でMyClickerをONにしてください", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "先に「ユーザー補助」でこのアプリをONにしてください", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-            startService(Intent(this, TouchRecordOverlayService::class.java))
+            startService(Intent(this, ReplayOverlayService::class.java))
             finish()
         }
     }
