@@ -2,15 +2,10 @@ package dev.fumiproject.smarttap.service
 
 import android.app.Service
 import android.content.Intent
-import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.os.Build
-import android.os.Handler
 import android.os.IBinder
-import android.os.Looper
-import android.os.SystemClock
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -24,25 +19,15 @@ class TouchRecordOverlayService : Service() {
 
     private lateinit var windowManager: WindowManager
     private lateinit var controlBar: LinearLayout
-    private var recordingLayerView: View? = null
-
-    private var isRecording = false
     private var isPlaying = false
-    private var lastTouchTime = 0L
 
-    // 記録されたタッチステップ
-    data class RecordedTouch(
-        val x: Float,
-        val y: Float,
-        val delayBeforeMs: Long
+    // ピン（ターゲット）のリスト
+    private val targets = mutableListOf<TargetMarker>()
+
+    data class TargetMarker(
+        val view: TextView,
+        val params: WindowManager.LayoutParams
     )
-
-    private val recordedTouches = mutableListOf<RecordedTouch>()
-    private val mainHandler = Handler(Looper.getMainLooper())
-
-    private lateinit var btnRecord: Button
-    private lateinit var btnPlay: Button
-    private lateinit var statusText: TextView
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -64,44 +49,58 @@ class TouchRecordOverlayService : Service() {
     private fun initControlBar() {
         controlBar = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#EE1A1A1A"))
-            setPadding(10, 10, 10, 10)
+            setBackgroundColor(Color.parseColor("#EE1F1F1F"))
+            setPadding(8, 8, 8, 8)
         }
 
-        statusText = TextView(this).apply {
-            text = "待機中"
-            textSize = 12f
-            setTextColor(Color.CYAN)
+        // 状態表示
+        val statusText = TextView(this).apply {
+            text = "MyClicker"
+            textSize = 10f
+            setTextColor(Color.YELLOW)
             gravity = Gravity.CENTER
-            setPadding(4, 4, 4, 8)
+            setPadding(2, 2, 2, 4)
         }
 
-        btnRecord = Button(this).apply {
-            text = "● 録画"
-            textSize = 14f
+        // 「＋」ピン追加ボタン
+        val btnAdd = Button(this).apply {
+            text = "＋"
+            textSize = 18f
             setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#DD2222"))
-            setOnClickListener { toggleRecording() }
+            setBackgroundColor(Color.parseColor("#007ACC"))
+            setOnClickListener { addTargetMarker() }
         }
 
-        btnPlay = Button(this).apply {
-            text = "▶ 再生"
-            textSize = 14f
+        // 「ー」ピン削除ボタン
+        val btnRemove = Button(this).apply {
+            text = "ー"
+            textSize = 18f
             setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#22AA22"))
-            setOnClickListener { togglePlayback() }
+            setBackgroundColor(Color.parseColor("#555555"))
+            setOnClickListener { removeLastTarget() }
         }
 
+        // 「▶ / ■」再生・停止ボタン
+        val btnPlay = Button(this).apply {
+            text = "▶"
+            textSize = 18f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#28A745"))
+            setOnClickListener { togglePlayback(this) }
+        }
+
+        // 「✕」アプリ終了ボタン
         val btnClose = Button(this).apply {
             text = "✕"
-            textSize = 12f
-            setTextColor(Color.LTGRAY)
-            setBackgroundColor(Color.parseColor("#444444"))
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#DC3545"))
             setOnClickListener { stopSelf() }
         }
 
         controlBar.addView(statusText)
-        controlBar.addView(btnRecord)
+        controlBar.addView(btnAdd)
+        controlBar.addView(btnRemove)
         controlBar.addView(btnPlay)
         controlBar.addView(btnClose)
 
@@ -117,7 +116,7 @@ class TouchRecordOverlayService : Service() {
             y = 350
         }
 
-        // コントロールバーのドラッグ移動
+        // バー自体のドラッグ移動
         var initX = 0
         var initY = 0
         var touchX = 0f
@@ -146,169 +145,114 @@ class TouchRecordOverlayService : Service() {
     }
 
     /**
-     * 録画の開始・停止
+     * 画面上にタップしたい場所を示すピン（①②③）を追加
      */
-    private fun toggleRecording() {
-        val service = ClickerAccessibilityService.instance
-        if (service == null) {
-            Toast.makeText(this, "ユーザー補助サービスをONにしてください", Toast.LENGTH_SHORT).show()
-            return
+    private fun addTargetMarker() {
+        val index = targets.size + 1
+        val markerView = TextView(this).apply {
+            text = "$index"
+            textSize = 18f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.parseColor("#CCFF5500")) // 半透明オレンジ
+            setPadding(20, 20, 20, 20)
         }
 
-        if (isPlaying) {
-            Toast.makeText(this, "再生中は録画できません", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        isRecording = !isRecording
-        if (isRecording) {
-            recordedTouches.clear()
-            lastTouchTime = SystemClock.uptimeMillis()
-            btnRecord.text = "■ 終了"
-            btnRecord.setBackgroundColor(Color.parseColor("#FF8800"))
-            statusText.text = "録画中(0)"
-            Toast.makeText(this, "あなたのタップを記録します。普通にゲームを操作してください。", Toast.LENGTH_LONG).show()
-
-            attachTransparentTouchLayer()
-        } else {
-            btnRecord.text = "● 録画"
-            btnRecord.setBackgroundColor(Color.parseColor("#DD2222"))
-            statusText.text = "記録:${recordedTouches.size}"
-            Toast.makeText(this, "録画完了: ${recordedTouches.size}件のタップを記録しました", Toast.LENGTH_SHORT).show()
-
-            detachTransparentTouchLayer()
-        }
-    }
-
-    /**
-     * 全面透明レイヤーを展開し、ユーザーのタップを横取り記録しながらゲーム側へ注入
-     */
-    private fun attachTransparentTouchLayer() {
-        if (recordingLayerView != null) return
-
-        // タッチ時のエフェクト描画用カスタムView
-        var rippleX = -1f
-        var rippleY = -1f
-        val paint = Paint().apply {
-            color = Color.parseColor("#80FF0000") // 半透明の赤
-            style = Paint.Style.FILL
-            isAntiAlias = true
-        }
-
-        recordingLayerView = object : View(this) {
-            override fun onDraw(canvas: Canvas) {
-                super.onDraw(canvas)
-                if (rippleX >= 0 && rippleY >= 0) {
-                    canvas.drawCircle(rippleX, rippleY, 50f, paint)
-                }
-            }
-        }.apply {
-            setOnTouchListener { view, event ->
-                if (event.action == MotionEvent.ACTION_DOWN) {
-                    val curTime = SystemClock.uptimeMillis()
-                    val delay = if (recordedTouches.isEmpty()) 200L else Math.min(curTime - lastTouchTime, 5000L)
-                    lastTouchTime = curTime
-
-                    val rx = event.rawX
-                    val ry = event.rawY
-
-                    // 1. タッチを記録
-                    recordedTouches.add(RecordedTouch(rx, ry, delay))
-                    statusText.text = "録画中(${recordedTouches.size})"
-
-                    // 2. エフェクト表示
-                    rippleX = rx
-                    rippleY = ry
-                    view.invalidate()
-                    mainHandler.postDelayed({
-                        rippleX = -1f
-                        rippleY = -1f
-                        view.invalidate()
-                    }, 120)
-
-                    // 3. 裏のゲームへ即座にタップを転送注入！
-                    ClickerAccessibilityService.instance?.tap(rx, ry)
-                }
-                true
-            }
-        }
-
-        val layerParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
+        val params = WindowManager.LayoutParams(
+            130, 130,
             getOverlayFlag(),
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
-        )
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = 250 + (index * 30)
+            y = 450
+        }
 
-        windowManager.addView(recordingLayerView, layerParams)
-        // 操作バーを一番手前に再表示
-        windowManager.removeView(controlBar)
-        windowManager.addView(controlBar, controlBar.layoutParams)
+        var tInitX = 0
+        var tInitY = 0
+        var tTouchX = 0f
+        var tTouchY = 0f
+
+        // ピンを指でドラッグして好きなキャラ枠へ置ける
+        markerView.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    tInitX = params.x
+                    tInitY = params.y
+                    tTouchX = event.rawX
+                    tTouchY = event.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    params.x = tInitX + (event.rawX - tTouchX).toInt()
+                    params.y = tInitY + (event.rawY - tTouchY).toInt()
+                    windowManager.updateViewLayout(markerView, params)
+                    true
+                }
+                else -> false
+            }
+        }
+
+        windowManager.addView(markerView, params)
+        targets.add(TargetMarker(markerView, params))
+        Toast.makeText(this, "ピン $index を追加しました。キャラの上に置いてください。", Toast.LENGTH_SHORT).show()
     }
 
-    private fun detachTransparentTouchLayer() {
-        recordingLayerView?.let {
-            windowManager.removeView(it)
-            recordingLayerView = null
+    private fun removeLastTarget() {
+        if (targets.isNotEmpty()) {
+            val last = targets.removeAt(targets.size - 1)
+            windowManager.removeView(last.view)
         }
     }
 
     /**
-     * 再生（記録されたタッチの自動再現）
+     * ピンを置いた場所を順番に自動連打
      */
-    private fun togglePlayback() {
+    private fun togglePlayback(btn: Button) {
         val service = ClickerAccessibilityService.instance
         if (service == null) {
-            Toast.makeText(this, "ユーザー補助サービスをONにしてください", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "ユーザー補助サービスが未接続です", Toast.LENGTH_SHORT).show()
             return
         }
 
-        if (isRecording) {
-            Toast.makeText(this, "先に録画を終了してください", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        if (recordedTouches.isEmpty()) {
-            Toast.makeText(this, "記録されたタップがありません。「● 録画」で操作してください。", Toast.LENGTH_SHORT).show()
+        if (targets.isEmpty()) {
+            Toast.makeText(this, "「＋」を押してキャラの上にピンを置いてください", Toast.LENGTH_SHORT).show()
             return
         }
 
         isPlaying = !isPlaying
         if (isPlaying) {
-            btnPlay.text = "■ 停止"
-            btnPlay.setBackgroundColor(Color.RED)
-            statusText.text = "再生中"
-            Toast.makeText(this, "自動再生を開始しました（無限ループ）", Toast.LENGTH_SHORT).show()
+            btn.text = "■"
+            btn.setBackgroundColor(Color.parseColor("#DC3545"))
+            Toast.makeText(this, "自動連打スタート！", Toast.LENGTH_SHORT).show()
 
             Thread {
                 while (isPlaying) {
-                    for (step in recordedTouches) {
+                    for (target in targets) {
                         if (!isPlaying) break
-                        if (step.delayBeforeMs > 0) {
-                            Thread.sleep(step.delayBeforeMs)
-                        }
-                        service.tap(step.x, step.y)
+                        // ピンの中心をタップ
+                        val clickX = (target.params.x + 65).toFloat()
+                        val clickY = (target.params.y + 65).toFloat()
+                        service.tap(clickX, clickY)
+                        Thread.sleep(350) // 連打間隔（ミリ秒）
                     }
-                    // 1周終わったら少し待機
-                    Thread.sleep(1000)
                 }
             }.start()
         } else {
-            btnPlay.text = "▶ 再生"
-            btnPlay.setBackgroundColor(Color.parseColor("#22AA22"))
-            statusText.text = "待機中"
-            Toast.makeText(this, "自動再生を停止しました", Toast.LENGTH_SHORT).show()
+            btn.text = "▶"
+            btn.setBackgroundColor(Color.parseColor("#28A745"))
+            Toast.makeText(this, "自動連打ストップ", Toast.LENGTH_SHORT).show()
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        isRecording = false
         isPlaying = false
-        detachTransparentTouchLayer()
+        for (target in targets) {
+            windowManager.removeView(target.view)
+        }
+        targets.clear()
         if (::controlBar.isInitialized) {
             windowManager.removeView(controlBar)
         }
