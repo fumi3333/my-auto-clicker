@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">SmartTap</string>
+    <string name="accessibility_desc">学習したタップ操作を自動再現するためのサービスです。</string>
+</resources>
